@@ -24,4 +24,4 @@ This folder implements our **CryoCCD model**, including:
 
 ---
 
-All EMPIAR dataset can be downloaded in https://www.ebi.ac.uk/empiar/
+All EMPIAR datasets can be downloaded in https://www.ebi.ac.uk/empiar/
