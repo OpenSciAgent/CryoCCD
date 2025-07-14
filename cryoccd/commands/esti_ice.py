@@ -10,13 +10,10 @@ from cryoccd.utils import mkdirs
 logger = logging.getLogger(__name__)
 
 def add_args(parser):
-    # input
     parser.add_argument("--apix", type=float, default=1.0, help="apix of input micrographs")
     parser.add_argument("--input_dir", type=str, required=True, help="input micrograph diectory")
-    # ouput
     parser.add_argument("--save_dir", type=str, required=True, help="weight map save directory")
     parser.add_argument("--output_len", type=int, default=1024, help="Output weight map size. [output_len, output_len]")
-    # general
     parser.add_argument("--device", type=str, default="cuda:0")
     return parser
 

@@ -11,7 +11,6 @@ import logging
 logger = logging.getLogger(__name__)
 
 class CryoGEMDataset(BaseDataset):
-    
     @staticmethod
     def modify_commandline_options(parser, is_train):
 

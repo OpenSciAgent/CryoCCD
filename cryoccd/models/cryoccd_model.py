@@ -6,7 +6,6 @@ from cryoccd.models import networks
 from cryoccd.micrograph import apply_weight_map_and_normalize
 from cryoccd.transform import instance_normalize
 from cryoccd import utils, losses
-from cryoccd.models.networks import define_D
 
 import logging
 logger = logging.getLogger(__name__)
@@ -26,7 +25,7 @@ class CryoCCDModel(BaseModel):
                             type=utils.str2bool, nargs='?', const=True, default=False,
                             help='Whether to use all negatives from minibatch')
         parser.add_argument('--netF', type=str, default='mask_sample',
-                            choices=['sample','reshape','mlp_sample','mask_sample'],
+                            choices=['mask_sample'],
                             help='Feature projection method')
         parser.add_argument('--netF_nc', type=int, default=256,
                             help='Output channels of the F network')
@@ -123,7 +122,7 @@ class CryoCCDModel(BaseModel):
                 if opt.netF=='mask_sample'
                 else losses.PatchNCELoss(opt).to(self.device)
             )
-            self.netD = define_D(
+            self.netD = networks.define_D(
                 input_nc=1, ndf=opt.ndf,
                 netD=opt.netD, n_layers_D=opt.n_layers_D,
                 norm=opt.norm
