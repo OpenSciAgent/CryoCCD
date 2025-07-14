@@ -1,4 +1,5 @@
 """
+======================
 CryoCCD Networks Module
 ======================
 
@@ -27,10 +28,6 @@ from cryoccd.transform import instance_normalize
 # Configure logging
 logger = logging.getLogger(__name__)
 
-
-# ====================
-# Network Factory Functions
-# ====================
 
 def define_F(input_nc, netF, norm='batch', use_dropout=False, 
              init_type='normal', init_gain=0.02, gpu_ids=[], opt=None):
@@ -84,10 +81,6 @@ def define_diffusion_unet(input_nc, output_nc, ngf, T, beta_1, beta_T,
     )
     return init_net(net, init_type, init_gain, gpu_ids, opt)
 
-
-# ====================
-# Utility Functions
-# ====================
 
 def get_norm_layer(norm_type='instance'):
     """Return a normalization layer."""
@@ -227,11 +220,6 @@ def extract(a: torch.Tensor, t: torch.LongTensor, x_shape):
     out = a.gather(-1, t)
     return out.view(batch_size, *([1] * (len(x_shape) - 1)))
 
-
-# ====================
-# Basic Modules
-# ====================
-
 class Identity(nn.Module):
     """Identity layer."""
     def forward(self, x):
@@ -315,10 +303,408 @@ class Upsample(nn.Module):
         else:
             return ret_val[:, :, :-1, :-1]
 
+class MomentumQueue(nn.Module):
+    """
+    Momentum-based queue for storing negative samples in MoCo.
+    """
+    def __init__(self, queue_size: int = 65536, feature_dim: int = 256):
+        super().__init__()
+        self.queue_size = queue_size
+        self.feature_dim = feature_dim
+        
+        # Initialize queue
+        self.register_buffer("queue", torch.randn(feature_dim, queue_size))
+        self.queue = F.normalize(self.queue, dim=0)
+        self.register_buffer("queue_ptr", torch.zeros(1, dtype=torch.long))
+    
+    @torch.no_grad()
+    def dequeue_and_enqueue(self, keys):
+        """Update queue with new keys."""
+        batch_size = keys.shape[0]
+        ptr = int(self.queue_ptr)
+        
+        # Replace the keys at ptr (dequeue and enqueue)
+        if ptr + batch_size <= self.queue_size:
+            self.queue[:, ptr:ptr + batch_size] = keys.T
+        else:
+            # Wrap around
+            remaining = self.queue_size - ptr
+            self.queue[:, ptr:] = keys[:remaining].T
+            self.queue[:, :batch_size - remaining] = keys[remaining:].T
+        
+        ptr = (ptr + batch_size) % self.queue_size
+        self.queue_ptr[0] = ptr
+    
+    def forward(self):
+        """Return current queue."""
+        return self.queue.clone()
 
-# ====================
-# Feature Extraction Networks
-# ====================
+
+class MoCoFeatureExtractor(nn.Module):
+    """
+    MoCo-enhanced feature extractor with momentum encoder.
+    """
+    
+    def __init__(self, base_encoder, feature_dim: int = 256, momentum: float = 0.999,
+                 temperature: float = 0.07, queue_size: int = 65536):
+        super().__init__()
+        self.momentum = momentum
+        self.temperature = temperature
+        
+        # Query encoder (trainable)
+        self.encoder_q = base_encoder
+        
+        # Key encoder (momentum-updated)
+        self.encoder_k = self._create_momentum_encoder(base_encoder)
+        
+        # Projection heads
+        self.projection_q = self._create_projection_head(feature_dim)
+        self.projection_k = self._create_projection_head(feature_dim)
+        
+        # Initialize key encoder with query encoder
+        self._initialize_momentum_encoder()
+        
+        # Queue for negative samples
+        self.queue = MomentumQueue(queue_size, feature_dim)
+    
+    def _create_momentum_encoder(self, base_encoder):
+        """Create momentum encoder by copying base encoder."""
+        import copy
+        momentum_encoder = copy.deepcopy(base_encoder)
+        
+        # Disable gradients for momentum encoder
+        for param in momentum_encoder.parameters():
+            param.requires_grad = False
+            
+        return momentum_encoder
+    
+    def _create_projection_head(self, feature_dim: int):
+        """Create MLP projection head."""
+        return nn.Sequential(
+            nn.Linear(feature_dim, feature_dim),
+            nn.ReLU(inplace=True),
+            nn.Linear(feature_dim, feature_dim)
+        )
+    
+    @torch.no_grad()
+    def _initialize_momentum_encoder(self):
+        """Initialize momentum encoder with query encoder parameters."""
+        for param_q, param_k in zip(self.encoder_q.parameters(), self.encoder_k.parameters()):
+            param_k.data.copy_(param_q.data)
+    
+    @torch.no_grad()
+    def _momentum_update(self):
+        """Momentum update of key encoder."""
+        for param_q, param_k in zip(self.encoder_q.parameters(), self.encoder_k.parameters()):
+            param_k.data = param_k.data * self.momentum + param_q.data * (1.0 - self.momentum)
+        
+        for param_q, param_k in zip(self.projection_q.parameters(), self.projection_k.parameters()):
+            param_k.data = param_k.data * self.momentum + param_q.data * (1.0 - self.momentum)
+    
+    def forward(self, query_images, key_images, update_queue=True):
+        """
+        Forward pass for MoCo.
+        
+        Args:
+            query_images: Query images (B, C, H, W)
+            key_images: Key images (B, C, H, W)
+            update_queue: Whether to update the momentum queue
+            
+        Returns:
+            Dictionary containing query features, key features, and queue
+        """
+        batch_size = query_images.shape[0]
+        
+        # Query features (trainable path)
+        q_features = self.encoder_q(query_images)
+        q_proj = self.projection_q(q_features)
+        q_proj = F.normalize(q_proj, dim=1)
+        
+        # Key features (momentum path)
+        with torch.no_grad():
+            if update_queue:
+                self._momentum_update()
+            
+            k_features = self.encoder_k(key_images)
+            k_proj = self.projection_k(k_features)
+            k_proj = F.normalize(k_proj, dim=1)
+        
+        # Get negative samples from queue
+        queue = self.queue()
+        
+        # Update queue
+        if update_queue:
+            self.queue.dequeue_and_enqueue(k_proj)
+        
+        return {
+            'query_features': q_proj,
+            'key_features': k_proj,
+            'queue': queue,
+            'raw_query_features': q_features,
+            'raw_key_features': k_features
+        }
+
+
+class MoCoLoss(nn.Module):
+    """
+    MoCo contrastive loss with InfoNCE.
+    """
+    
+    def __init__(self, temperature: float = 0.07):
+        super().__init__()
+        self.temperature = temperature
+        self.criterion = nn.CrossEntropyLoss()
+    
+    def forward(self, query_features, key_features, queue):
+        """
+        Compute MoCo loss.
+        
+        Args:
+            query_features: Normalized query features (B, D)
+            key_features: Normalized key features (B, D)
+            queue: Negative samples queue (D, K)
+            
+        Returns:
+            MoCo contrastive loss
+        """
+        batch_size = query_features.shape[0]
+        
+        # Positive logits: B x 1
+        l_pos = torch.einsum('nc,nc->n', [query_features, key_features]).unsqueeze(-1)
+        
+        # Negative logits: B x K
+        l_neg = torch.einsum('nc,ck->nk', [query_features, queue])
+        
+        # Logits: B x (1+K)
+        logits = torch.cat([l_pos, l_neg], dim=1)
+        logits /= self.temperature
+        
+        # Labels: positive key is the 0-th
+        labels = torch.zeros(batch_size, dtype=torch.long, device=query_features.device)
+        
+        return self.criterion(logits, labels)
+
+
+class MoCoEnhancedSampleF(MaskInformedSampleF):
+    """
+    Enhanced MaskInformedSampleF with MoCo support.
+    """
+    
+    def __init__(self, use_mlp=False, init_type='normal', init_gain=0.02, nc=256, 
+                 gpu_ids=[], use_moco=True, moco_momentum=0.999, moco_temperature=0.07,
+                 moco_queue_size=65536):
+        super().__init__(use_mlp, init_type, init_gain, nc, gpu_ids)
+        
+        self.use_moco = use_moco
+        if use_moco:
+            # Create momentum MLPs for MoCo
+            self.moco_momentum = moco_momentum
+            self.moco_temperature = moco_temperature
+            self.moco_mlps_k = {}
+            self.momentum_initialized = False
+            
+            # Queue for storing negative features
+            self.queues = {}
+            self.queue_size = moco_queue_size
+    
+    def create_moco_components(self, feats):
+        """Create momentum MLPs and queues for MoCo."""
+        if not self.use_moco:
+            return
+            
+        for mlp_id, feat in enumerate(feats):
+            input_nc = feat.shape[1]
+            
+            # Create momentum MLP (copy of original MLP)
+            if hasattr(self, f'mlp_{mlp_id}'):
+                mlp_k = nn.Sequential(
+                    nn.Linear(input_nc, self.nc), 
+                    nn.ReLU(), 
+                    nn.Linear(self.nc, self.nc)
+                )
+                if len(self.gpu_ids) > 0:
+                    mlp_k.cuda()
+                
+                # Disable gradients for momentum MLP
+                for param in mlp_k.parameters():
+                    param.requires_grad = False
+                
+                self.moco_mlps_k[mlp_id] = mlp_k
+                
+                # Initialize momentum MLP with query MLP
+                if hasattr(self, f'mlp_{mlp_id}'):
+                    mlp_q = getattr(self, f'mlp_{mlp_id}')
+                    self._copy_mlp_params(mlp_q, mlp_k)
+                
+                # Create queue for this layer
+                self.queues[mlp_id] = MomentumQueue(self.queue_size, self.nc)
+                if len(self.gpu_ids) > 0:
+                    self.queues[mlp_id] = self.queues[mlp_id].cuda()
+        
+        self.momentum_initialized = True
+    
+    @torch.no_grad()
+    def _copy_mlp_params(self, mlp_q, mlp_k):
+        """Copy parameters from query MLP to key MLP."""
+        for param_q, param_k in zip(mlp_q.parameters(), mlp_k.parameters()):
+            param_k.data.copy_(param_q.data)
+    
+    @torch.no_grad()
+    def _momentum_update_mlps(self):
+        """Update momentum MLPs."""
+        if not self.use_moco or not self.momentum_initialized:
+            return
+            
+        for mlp_id in self.moco_mlps_k:
+            if hasattr(self, f'mlp_{mlp_id}'):
+                mlp_q = getattr(self, f'mlp_{mlp_id}')
+                mlp_k = self.moco_mlps_k[mlp_id]
+                
+                for param_q, param_k in zip(mlp_q.parameters(), mlp_k.parameters()):
+                    param_k.data = (param_k.data * self.moco_momentum + 
+                                   param_q.data * (1.0 - self.moco_momentum))
+    
+    def moco_forward(self, query_feats, key_feats, num_patches=-1, masks=None, 
+                    pos_grids=None, neg_grids=None, update_momentum=True):
+        """
+        Forward pass with MoCo enhancement.
+        
+        Args:
+            query_feats: Query features
+            key_feats: Key features  
+            num_patches: Number of patches to sample
+            masks: Mask for sampling
+            pos_grids: Positive grids
+            neg_grids: Negative grids
+            update_momentum: Whether to update momentum
+            
+        Returns:
+            Dictionary with query features, key features, and queues
+        """
+        if not self.use_moco:
+            return self.forward(query_feats, num_patches, masks, pos_grids, neg_grids)
+        
+        # Initialize MoCo components if needed
+        if not self.momentum_initialized:
+            self.create_moco_components(query_feats)
+        
+        # Update momentum MLPs
+        if update_momentum:
+            self._momentum_update_mlps()
+        
+        # Process query features (trainable path)
+        query_pos_feats, query_neg_feats, pos_grids, neg_grids = self.forward(
+            query_feats, num_patches, masks, pos_grids, neg_grids
+        )
+        
+        # Process key features (momentum path)
+        with torch.no_grad():
+            key_pos_feats, key_neg_feats = self._process_key_features(
+                key_feats, pos_grids, neg_grids
+            )
+        
+        # Update queues with key features
+        if update_momentum:
+            self._update_queues(key_pos_feats, key_neg_feats)
+        
+        # Get current queues
+        pos_queues, neg_queues = self._get_current_queues()
+        
+        return {
+            'query_pos': query_pos_feats,
+            'query_neg': query_neg_feats,
+            'key_pos': key_pos_feats,
+            'key_neg': key_neg_feats,
+            'pos_queues': pos_queues,
+            'neg_queues': neg_queues,
+            'pos_grids': pos_grids,
+            'neg_grids': neg_grids
+        }
+    
+    def _process_key_features(self, key_feats, pos_grids, neg_grids):
+        """Process key features through momentum MLPs."""
+        key_pos_feats = []
+        key_neg_feats = []
+        
+        for feat_id, feat in enumerate(key_feats):
+            # Positive features
+            if pos_grids is not None:
+                B, C, Hk, Wk = feat.shape
+                x_sample = F.grid_sample(feat, pos_grids, align_corners=True, mode='bilinear')[:, :, 0, ...]
+                x_sample = x_sample.permute(0, 2, 1).flatten(0, 1)
+                
+                if feat_id in self.moco_mlps_k:
+                    x_sample = self.moco_mlps_k[feat_id](x_sample)
+                
+                x_sample = self.l2norm(x_sample)
+                x_sample = x_sample.view(B, -1, x_sample.shape[-1])
+                key_pos_feats.append(x_sample)
+            
+            # Negative features
+            if neg_grids is not None:
+                B, C, Hk, Wk = feat.shape
+                x_sample = F.grid_sample(feat, neg_grids, align_corners=True, mode='nearest')[:, :, 0, ...]
+                x_sample = x_sample.permute(0, 2, 1).flatten(0, 1)
+                
+                if feat_id in self.moco_mlps_k:
+                    x_sample = self.moco_mlps_k[feat_id](x_sample)
+                
+                x_sample = self.l2norm(x_sample)
+                x_sample = x_sample.view(B, -1, x_sample.shape[-1])
+                key_neg_feats.append(x_sample)
+        
+        return key_pos_feats, key_neg_feats
+    
+    def _update_queues(self, key_pos_feats, key_neg_feats):
+        """Update momentum queues with key features."""
+        for feat_id, (pos_feat, neg_feat) in enumerate(zip(key_pos_feats, key_neg_feats)):
+            if feat_id in self.queues:
+                # Update with positive features
+                pos_flat = pos_feat.flatten(0, 1)  # (B*N, D)
+                self.queues[feat_id].dequeue_and_enqueue(pos_flat)
+    
+    def _get_current_queues(self):
+        """Get current queue states."""
+        pos_queues = {}
+        neg_queues = {}
+        
+        for feat_id in self.queues:
+            queue = self.queues[feat_id]()
+            pos_queues[feat_id] = queue
+            neg_queues[feat_id] = queue  # Same queue for both pos/neg
+        
+        return pos_queues, neg_queues
+
+
+def define_F(input_nc, netF, norm='batch', use_dropout=False, init_type='normal', 
+             init_gain=0.02, gpu_ids=[], opt=None):
+    """Factory function for creating feature extraction networks with MoCo support."""
+    if netF == 'mask_sample':
+        use_moco = getattr(opt, 'use_moco', False)
+        if use_moco:
+            net = MoCoEnhancedSampleF(
+                use_mlp=True, 
+                init_type=init_type, 
+                init_gain=init_gain, 
+                gpu_ids=gpu_ids, 
+                nc=opt.netF_nc,
+                use_moco=True,
+                moco_momentum=getattr(opt, 'moco_momentum', 0.999),
+                moco_temperature=getattr(opt, 'moco_temperature', 0.07),
+                moco_queue_size=getattr(opt, 'moco_queue_size', 65536)
+            )
+        else:
+            net = MaskInformedSampleF(
+                use_mlp=True, 
+                init_type=init_type, 
+                init_gain=init_gain, 
+                gpu_ids=gpu_ids, 
+                nc=opt.netF_nc
+            )
+    else:
+        raise NotImplementedError(f'Projection model name [{netF}] is not recognized')
+    
+    return init_net(net, init_type, init_gain, gpu_ids)
 
 class MaskInformedSampleF(nn.Module):
     """Mask-informed feature sampling network for contrastive learning."""
@@ -446,9 +832,6 @@ class MaskInformedSampleF(nn.Module):
         return x_sample
 
 
-# ====================
-# Discriminator Networks
-# ====================
 
 class NLayerDiscriminator(nn.Module):
     """Defines a PatchGAN discriminator."""
@@ -523,9 +906,6 @@ class NLayerDiscriminator(nn.Module):
         return self.model(input)
 
 
-# ====================
-# Attention Modules
-# ====================
 
 class WindowAttention(nn.Module):
     """Window-based Multi-Head Self-Attention module."""
@@ -629,11 +1009,6 @@ class SelfAttention(nn.Module):
         out = out.permute(0, 1, 3, 2).reshape(b, c, h, w)
         
         return x + self.proj(out)
-
-
-# ====================
-# Diffusion Model Components
-# ====================
 
 class TimeEmbedding(nn.Module):
     """Time embedding for diffusion models."""
@@ -752,10 +1127,6 @@ class UpSample(nn.Module):
             x = self.conv(x)
         return x
 
-
-# ====================
-# Main Diffusion UNet
-# ====================
 
 class DiffusionUNet(nn.Module):
     """
@@ -916,10 +1287,6 @@ class DiffusionUNet(nn.Module):
         )
         x = instance_normalize(x, autocontrast=False)
         return x, noise
-
-    # ====================
-    # Sampling Methods
-    # ====================
 
     @torch.no_grad()
     def ddpm_sample(self, x_T: torch.Tensor, condition: Optional[torch.Tensor] = None, 
@@ -1334,7 +1701,6 @@ class DiffusionUNet(nn.Module):
             x = torch.sqrt(alpha_next) * x0_pred_avg + torch.sqrt(1 - alpha_next) * et_avg
             
         return torch.clamp(x, -1, 1)
-
 
     @torch.no_grad()
     def sample(self, x_T, condition=None, steps=20, sampler_type='dpmsolver++', 
