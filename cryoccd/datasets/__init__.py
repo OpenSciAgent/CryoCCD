@@ -6,7 +6,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 def find_dataset_using_name(dataset_name):
-    dataset_filename = "cryogem.datasets." + dataset_name + "_dataset"
+    dataset_filename = "cryoccd.datasets." + dataset_name + "_dataset"
     datasetlib = importlib.import_module(dataset_filename)
 
     dataset = None

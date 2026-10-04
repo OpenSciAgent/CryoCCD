@@ -198,44 +198,49 @@ class PatchNCELoss(nn.Module):
         return loss
     
 class MaskAwaredPatchNCELoss(nn.Module):
+    """Mask-guided PatchNCE loss (paper Sec. 4.2).
+
+    For every query patch q of the translated image, the positive k+ is the
+    source-image patch at the same location, and the negatives k- are source-image
+    patches from the other side of the mask (particle vs. background):
+
+        L_NCE = -log( exp(cos(q,k+)/tau) / (exp(cos(q,k+)/tau) + sum_{k-} exp(cos(q,k-)/tau)) )
+
+    Features are expected to be L2-normalized, so dot products are cosine similarities.
+    """
     def __init__(self, opt):
         super().__init__()
         self.opt = opt
         self.cross_entropy_loss = torch.nn.CrossEntropyLoss(reduction='none')
-        self.mask_dtype = torch.uint8 if version.parse(torch.__version__) < version.parse('1.2.0') else torch.bool
-    
-    def forward(self, feat_q_pos, feat_q_neg, feat_k):
-        B = feat_q_pos.shape[0]
-        C = feat_q_pos.shape[-1]
-        feat_q_pos = feat_q_pos.view(-1, C)
-        feat_q_neg = feat_q_neg.view(-1, C)
-        feat_k = feat_k.view(-1, C)
-        
-        num_patches = feat_q_pos.shape[0]
 
-        # pos logit
-        l_pos = torch.bmm(
-            feat_q_pos.view(num_patches, 1, -1), feat_k.view(num_patches, -1, 1))
-        l_pos = l_pos.view(num_patches, 1)
-        
-        # neg logit
+    def forward(self, feat_q, feat_k_pos, feat_k_neg):
+        """
+        Args:
+            feat_q     (Tensor): [B, Nq, C] query features from the translated image
+            feat_k_pos (Tensor): [B, Nq, C] source features at the same locations as feat_q
+            feat_k_neg (Tensor): [B, Nk, C] source features used as negatives
+
+        Returns:
+            loss (Tensor): [B*Nq] per-query loss
+        """
+        B, Nq, C = feat_q.shape
+
+        # pos logit: cos(q, k+), one per query
+        l_pos = (feat_q * feat_k_pos).sum(dim=-1).reshape(B * Nq, 1)
+
+        # neg logits: cos(q, k-) for every negative of the same image
+        # (or of the whole minibatch if nce_includes_all_negatives_from_minibatch)
         if self.opt.nce_includes_all_negatives_from_minibatch:
-            # reshape features as if they are all negatives of minibatch of size 1.
-            batch_dim_for_bmm = 1
+            q = feat_q.reshape(1, B * Nq, C)
+            k_neg = feat_k_neg.reshape(1, -1, C)
         else:
-            batch_dim_for_bmm = B
-            
-        # reshape features to batch size
-        # logger.info(feat_k.shape)
-        feat_q = feat_q_neg.view(batch_dim_for_bmm, -1, feat_q_neg.shape[1])
-        feat_k = feat_k.view(batch_dim_for_bmm, -1, feat_k.shape[1])
-        npatches = feat_q.size(1)
-        l_neg = torch.bmm(feat_q, feat_k.transpose(2, 1))
-        l_neg = l_neg.view(-1, npatches)
-        
+            q = feat_q
+            k_neg = feat_k_neg
+        l_neg = torch.bmm(q, k_neg.transpose(2, 1)).reshape(B * Nq, -1)
+
         out = torch.cat((l_pos, l_neg), dim=1) / self.opt.nce_T
-        
+
         loss = self.cross_entropy_loss(out, torch.zeros(out.size(0), dtype=torch.long,
-                                                    device=feat_q.device))
-        
+                                                        device=feat_q.device))
+
         return loss

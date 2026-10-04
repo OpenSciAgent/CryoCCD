@@ -39,6 +39,10 @@ def add_test_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
                         help='Use eval mode during test time')
     parser.add_argument('--num_test', type=int, default=50,
                         help='Number of test images to run')
+    parser.add_argument('--T', type=int, default=1000,
+                        help='Total diffusion steps; must match the value used in training')
+    parser.add_argument('--sampling_steps', type=int, default=20,
+                        help='Number of sampler steps at inference')
     
     # Output configuration
     parser.add_argument('--save_dir', type=str, required=True,

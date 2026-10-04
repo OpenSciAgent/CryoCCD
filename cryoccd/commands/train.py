@@ -90,11 +90,9 @@ def print_losses(epoch, epoch_iter, losses, t_comp, t_data):
 
 def initialize_model(model, opt, data, epoch, iteration):
     """Initialize model based on type and training stage."""
-    if 'cryogem' in opt.model and epoch == opt.epoch_count and iteration == 0:
+    if epoch == opt.epoch_count and iteration == 0:
+        # builds lazily-sized modules (e.g. the NCE projection head) before optimizers/schedulers are set up
         model.data_dependent_initialize(data)
-        model.setup(opt)
-        model.parallelize()
-    elif epoch == opt.epoch_count and iteration == 0:
         model.setup(opt)
         model.parallelize()
 

@@ -72,12 +72,16 @@ def define_D(input_nc, ndf, netD, n_layers_D=3, norm='batch',
 def define_diffusion_unet(input_nc, output_nc, ngf, T, beta_1, beta_T, 
                           norm='instance', use_dropout=False, init_type='normal', 
                           init_gain=0.02, gpu_ids=[], opt=None, no_antialias=False, 
-                          no_antialias_up=False):
-    """Factory function for creating diffusion UNet."""
+                          no_antialias_up=False, cond_nc=1):
+    """Factory function for creating diffusion UNet.
+
+    cond_nc is the number of condition channels, e.g. 2 for [source image, mask].
+    """
     norm_layer = get_norm_layer(norm_type=norm)
     net = DiffusionUNet(
         input_nc, output_nc, ngf, T, beta_1, beta_T, norm_layer, 
-        use_dropout, no_antialias, no_antialias_up
+        use_dropout, no_antialias=no_antialias, no_antialias_up=no_antialias_up,
+        cond_nc=cond_nc
     )
     return init_net(net, init_type, init_gain, gpu_ids, opt)
 
@@ -302,6 +306,133 @@ class Upsample(nn.Module):
             return ret_val
         else:
             return ret_val[:, :, :-1, :-1]
+
+class MaskInformedSampleF(nn.Module):
+    """Mask-informed feature sampling network for contrastive learning."""
+    
+    def __init__(self, use_mlp=False, init_type='normal', init_gain=0.02, nc=256, gpu_ids=[]):
+        super().__init__()
+        self.l2norm = Normalize(2)
+        self.use_mlp = use_mlp
+        self.nc = nc
+        self.mlp_init = False
+        self.init_type = init_type
+        self.init_gain = init_gain
+        self.gpu_ids = gpu_ids   
+
+    def create_mlp(self, feats):
+        """Create MLP layers for feature processing."""
+        for mlp_id, feat in enumerate(feats):
+            input_nc = feat.shape[1]
+            mlp = nn.Sequential(
+                nn.Linear(input_nc, self.nc), 
+                nn.ReLU(), 
+                nn.Linear(self.nc, self.nc)
+            )
+            if len(self.gpu_ids) > 0:
+                mlp.cuda()
+            setattr(self, f'mlp_{mlp_id}', mlp)
+        
+        init_net(self, self.init_type, self.init_gain, self.gpu_ids)
+        self.mlp_init = True
+        
+    def custom_forward(self, feats, l2_norm=True, use_mlp=True):
+        """Forward pass for feature map processing."""
+        out = []
+        for feat_id, feat in enumerate(feats):
+            B, C, Hk, Wk = feat.shape
+            feat = feat.permute(0, 2, 3, 1).flatten(0, 1).flatten(0, 1)  # [B*Hk*Wk, C]
+            
+            if self.use_mlp and use_mlp:
+                mlp = getattr(self, f'mlp_{feat_id}')
+                feat = mlp(feat)
+                
+            if l2_norm:
+                feat = self.l2norm(feat)
+                
+            feat = feat.view(B, Hk, Wk, feat.shape[-1])
+            out.append(feat)
+        return out
+        
+    def forward(self, feats, num_patches=-1, masks=None, pos_grids=None, 
+                neg_grids=None, only_init=False, l2_norm=True, use_mlp=True):
+        """Forward pass for positive/negative sampling."""
+        pos_feats = []
+        neg_feats = []
+        
+        # Initialize MLPs if needed
+        if self.use_mlp and not self.mlp_init:
+            self.create_mlp(feats)
+            if only_init: 
+                return 
+        
+        if masks is not None:
+            masks = masks[:, 0, :, :]
+            
+        # Process positive samples
+        if pos_grids is None:
+            pos_grids = self._generate_grids_from_mask(masks, num_patches)
+        else:
+            num_samples = pos_grids.shape[-2]
+
+        for feat_id, feat in enumerate(feats):
+            x_sample = self._sample_features(feat, pos_grids, feat_id, l2_norm, use_mlp)
+            pos_feats.append(x_sample)
+
+        # Process negative samples (inverted mask)
+        if masks is not None:
+            masks = ~masks
+            
+        if neg_grids is None:
+            neg_grids = self._generate_grids_from_mask(masks, num_patches)
+        else:
+            num_samples = neg_grids.shape[-2]
+            
+        for feat_id, feat in enumerate(feats):
+            x_sample = self._sample_features(feat, neg_grids, feat_id, l2_norm, use_mlp, mode='nearest')
+            neg_feats.append(x_sample)
+            
+        return pos_feats, neg_feats, pos_grids, neg_grids
+    
+    def _generate_grids_from_mask(self, masks, num_patches):
+        """Generate sampling grids from mask."""
+        if num_patches != -1:
+            num_samples_per_mask = torch.sum(masks.flatten(1, 2), dim=1)
+            num_samples = torch.min(num_samples_per_mask).item()
+            num_samples = min(num_samples, num_patches)
+            
+        B, H, W = masks.shape
+        grids = []
+        
+        for b in range(B):
+            mask_y, mask_x = torch.where(masks[b])
+            mask_y = 2 * (mask_y.float() / (H - 1)) - 1
+            mask_x = 2 * (mask_x.float() / (W - 1)) - 1
+            grid = torch.stack([mask_x, mask_y], dim=-1)
+            
+            if num_patches != -1: 
+                grid = grid[torch.randint(0, grid.shape[0], (num_samples,))]
+            grids.append(grid)  
+            
+        return torch.stack(grids, dim=0)[:, None, ...]
+    
+    def _sample_features(self, feat, grids, feat_id, l2_norm, use_mlp, mode='bilinear'):
+        """Sample features from feature maps using grids."""
+        B, C, Hk, Wk = feat.shape
+        x_sample = F.grid_sample(feat, grids, align_corners=True, mode=mode)[:, :, 0, ...]
+        x_sample = x_sample.permute(0, 2, 1).flatten(0, 1)  # [B*N, C]
+        
+        if self.use_mlp and use_mlp:
+            mlp = getattr(self, f'mlp_{feat_id}')
+            x_sample = mlp(x_sample)
+            
+        if l2_norm:
+            x_sample = self.l2norm(x_sample)
+            
+        x_sample = x_sample.view(B, -1, x_sample.shape[-1])
+        return x_sample
+
+
 
 class MomentumQueue(nn.Module):
     """
@@ -706,133 +837,6 @@ def define_F(input_nc, netF, norm='batch', use_dropout=False, init_type='normal'
     
     return init_net(net, init_type, init_gain, gpu_ids)
 
-class MaskInformedSampleF(nn.Module):
-    """Mask-informed feature sampling network for contrastive learning."""
-    
-    def __init__(self, use_mlp=False, init_type='normal', init_gain=0.02, nc=256, gpu_ids=[]):
-        super().__init__()
-        self.l2norm = Normalize(2)
-        self.use_mlp = use_mlp
-        self.nc = nc
-        self.mlp_init = False
-        self.init_type = init_type
-        self.init_gain = init_gain
-        self.gpu_ids = gpu_ids   
-
-    def create_mlp(self, feats):
-        """Create MLP layers for feature processing."""
-        for mlp_id, feat in enumerate(feats):
-            input_nc = feat.shape[1]
-            mlp = nn.Sequential(
-                nn.Linear(input_nc, self.nc), 
-                nn.ReLU(), 
-                nn.Linear(self.nc, self.nc)
-            )
-            if len(self.gpu_ids) > 0:
-                mlp.cuda()
-            setattr(self, f'mlp_{mlp_id}', mlp)
-        
-        init_net(self, self.init_type, self.init_gain, self.gpu_ids)
-        self.mlp_init = True
-        
-    def custom_forward(self, feats, l2_norm=True, use_mlp=True):
-        """Forward pass for feature map processing."""
-        out = []
-        for feat_id, feat in enumerate(feats):
-            B, C, Hk, Wk = feat.shape
-            feat = feat.permute(0, 2, 3, 1).flatten(0, 1).flatten(0, 1)  # [B*Hk*Wk, C]
-            
-            if self.use_mlp and use_mlp:
-                mlp = getattr(self, f'mlp_{feat_id}')
-                feat = mlp(feat)
-                
-            if l2_norm:
-                feat = self.l2norm(feat)
-                
-            feat = feat.view(B, Hk, Wk, feat.shape[-1])
-            out.append(feat)
-        return out
-        
-    def forward(self, feats, num_patches=-1, masks=None, pos_grids=None, 
-                neg_grids=None, only_init=False, l2_norm=True, use_mlp=True):
-        """Forward pass for positive/negative sampling."""
-        pos_feats = []
-        neg_feats = []
-        
-        # Initialize MLPs if needed
-        if self.use_mlp and not self.mlp_init:
-            self.create_mlp(feats)
-            if only_init: 
-                return 
-        
-        if masks is not None:
-            masks = masks[:, 0, :, :]
-            
-        # Process positive samples
-        if pos_grids is None:
-            pos_grids = self._generate_grids_from_mask(masks, num_patches)
-        else:
-            num_samples = pos_grids.shape[-2]
-
-        for feat_id, feat in enumerate(feats):
-            x_sample = self._sample_features(feat, pos_grids, feat_id, l2_norm, use_mlp)
-            pos_feats.append(x_sample)
-
-        # Process negative samples (inverted mask)
-        if masks is not None:
-            masks = ~masks
-            
-        if neg_grids is None:
-            neg_grids = self._generate_grids_from_mask(masks, num_patches)
-        else:
-            num_samples = neg_grids.shape[-2]
-            
-        for feat_id, feat in enumerate(feats):
-            x_sample = self._sample_features(feat, neg_grids, feat_id, l2_norm, use_mlp, mode='nearest')
-            neg_feats.append(x_sample)
-            
-        return pos_feats, neg_feats, pos_grids, neg_grids
-    
-    def _generate_grids_from_mask(self, masks, num_patches):
-        """Generate sampling grids from mask."""
-        if num_patches != -1:
-            num_samples_per_mask = torch.sum(masks.flatten(1, 2), dim=1)
-            num_samples = torch.min(num_samples_per_mask).item()
-            num_samples = min(num_samples, num_patches)
-            
-        B, H, W = masks.shape
-        grids = []
-        
-        for b in range(B):
-            mask_y, mask_x = torch.where(masks[b])
-            mask_y = 2 * (mask_y.float() / (H - 1)) - 1
-            mask_x = 2 * (mask_x.float() / (W - 1)) - 1
-            grid = torch.stack([mask_x, mask_y], dim=-1)
-            
-            if num_patches != -1: 
-                grid = grid[torch.randint(0, grid.shape[0], (num_samples,))]
-            grids.append(grid)  
-            
-        return torch.stack(grids, dim=0)[:, None, ...]
-    
-    def _sample_features(self, feat, grids, feat_id, l2_norm, use_mlp, mode='bilinear'):
-        """Sample features from feature maps using grids."""
-        B, C, Hk, Wk = feat.shape
-        x_sample = F.grid_sample(feat, grids, align_corners=True, mode=mode)[:, :, 0, ...]
-        x_sample = x_sample.permute(0, 2, 1).flatten(0, 1)  # [B*N, C]
-        
-        if self.use_mlp and use_mlp:
-            mlp = getattr(self, f'mlp_{feat_id}')
-            x_sample = mlp(x_sample)
-            
-        if l2_norm:
-            x_sample = self.l2norm(x_sample)
-            
-        x_sample = x_sample.view(B, -1, x_sample.shape[-1])
-        return x_sample
-
-
-
 class NLayerDiscriminator(nn.Module):
     """Defines a PatchGAN discriminator."""
 
@@ -1139,7 +1143,8 @@ class DiffusionUNet(nn.Module):
     def __init__(self, input_nc: int, output_nc: int, ngf: int, T: int, 
                  beta_1: float, beta_T: float, norm_layer=nn.BatchNorm2d,
                  use_dropout: bool = False, init_type=None, init_gain=None, 
-                 gpu_ids=None, opt=None, no_antialias=False, no_antialias_up=False):
+                 gpu_ids=None, opt=None, no_antialias=False, no_antialias_up=False,
+                 cond_nc: int = 1):
         super().__init__()
         self.T = T
         dropout = 0.1 if use_dropout else 0.0
@@ -1153,7 +1158,7 @@ class DiffusionUNet(nn.Module):
 
         # Embeddings
         self.time_embedding = TimeEmbedding(T, ngf, ngf*4)
-        self.condition_encoder = ConditionEncoder(input_nc, ngf*4, norm_layer)
+        self.condition_encoder = ConditionEncoder(cond_nc, ngf*4, norm_layer)
 
         # Input projection
         self.input_conv = nn.Conv2d(input_nc, ngf, 3, padding=1)

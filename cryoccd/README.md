@@ -42,14 +42,19 @@ python -m cryoccd.commands.train \
   --beta1 0.5 \
   --lr 1e-4 \
   --sampling_steps 10 \
-  --lambda_NCE 20.0 \
+  --lambda_NCE 5.0 \
   --lambda_GAN 1.0 \
-  --lambda_cycle 5.0 \
+  --lambda_cycle 3.0 \
   --use_window_attention True \
   --window_size 8 \
   --num_heads 4 \
-  --sampler_type ddpm
+  --batch_size 4
 ```
+
+Training follows the paper: each iteration draws one diffusion step `t`, evaluates each noise
+predictor once and computes the clean estimate `x0_hat` in closed form; the losses
+(least-squares adversarial, cycle consistency, mask-guided contrastive; weights 1 / 3 / 5)
+are applied to `x0_hat`. The sampler is used only at test time.
 
 > Replace `<...>` with your actual paths and experiment name.
 
@@ -61,6 +66,7 @@ Run the following command to sample/test from a trained model:
 
 ```bash
 python -m cryoccd.commands.test \
+  --model cryoccd \
   --name <experiment_name> \
   --max_dataset_size 1000 \
   --num_test 1000 \
@@ -71,7 +77,7 @@ python -m cryoccd.commands.test \
   --weight_map_dir <path_to_weight_maps> \
   --save_dir <output_directory> \
   --sampling_steps 10 \
-  --sampler_type ddpm \
+  --sampler_type unipc \
   --T 10
 ```
 
@@ -81,10 +87,13 @@ python -m cryoccd.commands.test \
 
 CryoCCD supports the following samplers (choose with `--sampler_type`):
 
+- `unipc` (default; UniPC predictor-corrector, used in the paper)
 - `ddpm`
 - `ddim`
 - `dpmsolver`
 - `dpmsolver++`
+- `lms`
+- `heun`
 
 ---
 
