@@ -1,0 +1,569 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>CryoCCD: Simulating Cryo-EM with Cycle-Consistent Predictor–Corrector Diffusion</title>
+    <meta
+      name="description"
+      content="CryoCCD is a cryo-EM simulator that pairs a biophysical modeling engine with the first diffusion model for realistic cryo-EM noise generation. TMLR 2026."
+    />
+    <meta property="og:title" content="CryoCCD: Simulating Cryo-EM with Cycle-Consistent Predictor–Corrector Diffusion" />
+    <meta
+      property="og:description"
+      content="A biophysical engine builds noise-free micrographs from structures; a cycle-consistent predictor–corrector diffusion model adds realistic noise learned from real cryo-EM."
+    />
+    <meta property="og:image" content="https://runminjiang.github.io/CryoCCD/assets/images/og.jpg" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="citation_title" content="Simulating Cryo-EM: Cycle-Consistent Predictor–Corrector Diffusion with Biophysical Modeling" />
+    <meta name="citation_author" content="Jiang, Runmin" />
+    <meta name="citation_author" content="Zhang, Genpei" />
+    <meta name="citation_author" content="Yang, Yuntian" />
+    <meta name="citation_author" content="Wu, Siqi" />
+    <meta name="citation_author" content="Min, Seonghui" />
+    <meta name="citation_author" content="Xiao, Xi" />
+    <meta name="citation_author" content="Zhao, Yizhou" />
+    <meta name="citation_author" content="Wang, Xiao" />
+    <meta name="citation_author" content="Wang, Tianyang" />
+    <meta name="citation_author" content="Li, Xingjian" />
+    <meta name="citation_author" content="Chen, Muyuan" />
+    <meta name="citation_author" content="Xu, Min" />
+    <meta name="citation_publication_date" content="2026" />
+    <meta name="citation_journal_title" content="Transactions on Machine Learning Research" />
+    <meta name="citation_pdf_url" content="https://openreview.net/pdf?id=oBBBg2MbGB" />
+    <meta name="citation_keywords" content="cryo-EM; simulation; diffusion models; cycle consistency; biophysical modeling; synthetic data" />
+    <link rel="canonical" href="https://runminjiang.github.io/CryoCCD/" />
+    <meta name="theme-color" content="#e3f1f4" />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='15' fill='%23125e73'/%3E%3Ccircle cx='11' cy='12' r='3.2' fill='%23e3f1f4'/%3E%3Ccircle cx='21' cy='11' r='2.4' fill='%23e3f1f4'/%3E%3Ccircle cx='19' cy='21' r='3.6' fill='%23e3f1f4'/%3E%3Ccircle cx='10' cy='22' r='2' fill='%23e3f1f4'/%3E%3C/svg%3E" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Noto+Serif:wght@500;700&family=JetBrains+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+      onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false}]})"></script>
+    <link rel="stylesheet" href="assets/styles.css" />
+  </head>
+  <body>
+    <main id="top">
+      <!-- ============ Hero ============ -->
+      <section class="hero">
+        <div class="hero-inner">
+          <p class="eyebrow">CryoCCD</p>
+          <h1>
+            Simulating Cryo-EM: <span>Cycle-Consistent Predictor–Corrector Diffusion</span> with Biophysical Modeling
+          </h1>
+          <p class="subtitle">
+            A biophysical engine turns protein structures into noise-free micrographs, and the first diffusion model for
+            cryo-EM noise synthesis makes them look like real data.
+          </p>
+
+          <p class="venue-line">
+            <a class="venue-badge" href="https://openreview.net/forum?id=oBBBg2MbGB" target="_blank" rel="noopener">
+              Transactions on Machine Learning Research (TMLR) 2026
+            </a>
+          </p>
+
+          <div class="authors" aria-label="Authors">
+            <p class="author-list">
+              <span class="author-line">
+                <span class="author">Runmin&nbsp;Jiang<sup>1*</sup></span>,
+                <a href="https://zgp110.github.io/" target="_blank" rel="noopener">Genpei&nbsp;Zhang</a><sup>2*</sup>,
+                <span class="author">Yuntian&nbsp;Yang<sup>3*</sup></span>,
+                <span class="author">Siqi&nbsp;Wu<sup>1</sup></span>,
+                <span class="author">Seonghui&nbsp;Min<sup>1</sup></span>,
+                <a href="https://xixiaouab.github.io/" target="_blank" rel="noopener">Xi&nbsp;Xiao</a><sup>4</sup>,
+              </span>
+              <span class="author-line">
+                <span class="author">Yizhou&nbsp;Zhao<sup>1</sup></span>,
+                <span class="author">Xiao&nbsp;Wang<sup>5</sup></span>,
+                <a href="https://wangt0716.github.io/index.html" target="_blank" rel="noopener">Tianyang&nbsp;Wang</a><sup>4</sup>,
+                <span class="author">Xingjian&nbsp;Li<sup>1</sup></span>,
+                <span class="author">Muyuan&nbsp;Chen<sup>6</sup></span>,
+                <span class="author">Min&nbsp;Xu<sup>1†</sup></span>
+              </span>
+            </p>
+            <p class="affiliations">
+              <sup>1</sup>Carnegie Mellon University &middot;
+              <sup>2</sup>University of Wisconsin–Madison &middot;
+              <sup>3</sup>Harvard University &middot;
+              <sup>4</sup>University of Alabama at Birmingham &middot;
+              <sup>5</sup>Oak Ridge National Laboratory &middot;
+              <sup>6</sup>Stanford University
+            </p>
+            <p class="notes"><sup>*</sup>Equal contribution &nbsp;&nbsp; <sup>†</sup>Corresponding author</p>
+          </div>
+
+          <div class="button-row" aria-label="Project links">
+            <a class="button" href="https://openreview.net/forum?id=oBBBg2MbGB" target="_blank" rel="noopener">
+              <span class="button-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><path d="M6 2h9l5 5v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2Zm8 1.5V8h4.5L14 3.5ZM8 12h8v1.5H8V12Zm0 3h8v1.5H8V15Zm0 3h5v1.5H8V18Z"/></svg>
+              </span>
+              <span>OpenReview</span>
+            </a>
+            <a class="button" href="static/CryoCCD_TMLR2026.pdf" target="_blank" rel="noopener">
+              <span class="button-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><path d="M6 2h9l5 5v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2Zm8 1.5V8h4.5L14 3.5ZM8 12h3a2.5 2.5 0 0 1 0 5H9v2H8v-7Zm1 1v3h2a1.5 1.5 0 0 0 0-3H9Zm6 0h1.6c1.9 0 3.2 1.2 3.2 3s-1.3 3-3.2 3H15v-6Zm1 1v4h.6c1.3 0 2.1-.8 2.1-2s-.8-2-2.1-2H16Z"/></svg>
+              </span>
+              <span>PDF</span>
+            </a>
+            <a class="button" href="https://github.com/runminjiang/CryoCCD" target="_blank" rel="noopener">
+              <span class="button-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><path d="M12 .8A11.2 11.2 0 0 0 .8 12c0 5 3.3 9.2 7.8 10.7.6.1.8-.2.8-.6v-2.1c-3.2.7-3.9-1.4-3.9-1.4-.5-1.3-1.2-1.7-1.2-1.7-1-.7.1-.7.1-.7 1.1.1 1.7 1.2 1.7 1.2 1 1.7 2.7 1.2 3.3.9.1-.7.4-1.2.7-1.5-2.5-.3-5.2-1.3-5.2-5.6 0-1.2.4-2.3 1.2-3.1-.1-.3-.5-1.5.1-3 0 0 1-.3 3.2 1.2.9-.3 1.9-.4 2.9-.4s2 .1 2.9.4c2.2-1.5 3.2-1.2 3.2-1.2.6 1.5.2 2.7.1 3 .7.8 1.2 1.8 1.2 3.1 0 4.4-2.7 5.3-5.2 5.6.4.3.8 1 .8 2.1v3.2c0 .4.2.7.8.6A11.2 11.2 0 0 0 23.2 12 11.2 11.2 0 0 0 12 .8Z"/></svg>
+              </span>
+              <span>Code</span>
+            </a>
+            <a class="button" href="#citation">
+              <span class="button-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><path d="M7 4h11v3H9v3h8v3H9v4h9v3H7V4ZM4 4h2v16H4V4Z"/></svg>
+              </span>
+              <span>BibTeX</span>
+            </a>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ Teaser ============ -->
+      <section class="teaser-section" aria-labelledby="teaser-caption">
+        <div class="container">
+          <figure class="teaser">
+            <a href="assets/images/sample.webp" target="_blank" rel="noopener">
+              <img src="assets/images/sample.webp" alt="Overview of CryoCCD: a biophysical engine produces noise-free micrographs from density maps; a diffusion model adds realistic noise learned from real cryo-EM." />
+            </a>
+            <figcaption id="teaser-caption">
+              <strong>Simulating cryo-EM with CryoCCD.</strong> The biophysical engine builds a virtual specimen from
+              structure density maps and projects it into a noise-free micrograph; a cycle-consistent predictor–corrector
+              diffusion model then synthesizes noise learned from real data (example: EMPIAR-10028,
+              <em>Plasmodium falciparum</em> 80S ribosome).
+            </figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <!-- ============ Abstract ============ -->
+      <section id="abstract" class="section">
+        <div class="container text-grid">
+          <div>
+            <p class="section-kicker">Abstract</p>
+            <h2>Learning-based cryo-EM tools need more labelled data than exists.</h2>
+          </div>
+          <div class="prose">
+            <p>
+              Single-particle cryo-electron microscopy (cryo-EM) has become a cornerstone of structural biology, enabling
+              near-atomic resolution analysis of macromolecules through advanced computational methods. However, the
+              development of cryo-EM processing tools is constrained by the scarcity of high-quality annotated datasets.
+              Synthetic data generation offers a promising alternative, but existing approaches lack thorough biophysical
+              modeling of heterogeneity and fail to reproduce the complex noise observed in real imaging.
+            </p>
+            <p>
+              To address these limitations, we present <strong>CryoCCD</strong>, a comprehensive simulator for cryo-EM,
+              unifying versatile biophysical modeling with the first diffusion model for realistic noise generation. The
+              biophysical engine provides multi-functional generation capabilities to capture authentic biological
+              organization, and the diffusion model is enhanced with cycle consistency and predictor–corrector sampling to
+              improve realism and structural fidelity. Extensive experiments demonstrate that CryoCCD generates
+              structurally faithful micrographs, enhances particle picking and pose estimation, as well as achieves
+              superior performance over state-of-the-art baselines, while also generalizing effectively to held-out
+              protein families.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ Contributions ============ -->
+      <section class="section section-soft">
+        <div class="container">
+          <div class="section-heading">
+            <p class="section-kicker">Contributions</p>
+            <h2>What CryoCCD adds</h2>
+          </div>
+          <div class="claim-grid">
+            <article class="claim-card">
+              <span class="claim-index">01</span>
+              <h3>A biophysical engine for heterogeneous specimens.</h3>
+              <p>
+                PDB structures and AlphaFold3 predictions are placed into virtual volumes with particle-type-specific
+                distributions, multi-scale meshes and a modeled ice layer, then projected under the weak-phase approximation
+                with a CTF.
+              </p>
+            </article>
+            <article class="claim-card">
+              <span class="claim-index">02</span>
+              <h3>The first diffusion model for cryo-EM noise.</h3>
+              <p>
+                Unpaired clean-to-real translation with cycle consistency to keep structures intact, mask-guided contrastive
+                learning for fine detail, and a UniPC predictor–corrector sampler for noise fidelity.
+              </p>
+            </article>
+            <article class="claim-card">
+              <span class="claim-index">03</span>
+              <h3>Gains on realism and on downstream tasks.</h3>
+              <p>
+                Lowest FID and CMMD on six EMPIAR datasets, better particle picking (AUPRC) and pose estimation, and the
+                best scores on four held-out datasets with unseen protein families or imaging conditions.
+              </p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ Method ============ -->
+      <section id="method" class="section">
+        <div class="container">
+          <div class="section-heading">
+            <p class="section-kicker">Method</p>
+            <h2>From atomic structures to realistic micrographs</h2>
+            <p class="section-note">
+              The pipeline has two stages. Biophysical modeling produces clean, fully annotated micrographs with known
+              particle positions, poses and masks; realistic noise generation translates them into the real micrograph domain
+              without paired data.
+            </p>
+          </div>
+
+          <figure class="wide-figure">
+            <a href="assets/images/pipelinenew.webp" target="_blank" rel="noopener">
+              <img src="assets/images/pipelinenew.webp" alt="CryoCCD pipeline: biophysical modeling (top) and realistic noise generation with cycle-consistent predictor–corrector diffusion (bottom)." />
+            </a>
+            <figcaption>
+              <strong>CryoCCD pipeline.</strong> (1) Biophysical modeling: input structures are placed into a 3D volume,
+              then passed through physics-based projection and density conversion. (2) Realistic noise generation:
+              synthetic images are translated into realistic noisy micrographs with cycle-consistent predictor–corrector
+              diffusion and mask-guided contrastive learning. Within one diffusion step, the predictor and corrector advance
+              the state from \(t_{i-1}\) to the corrected state at \(t_i\).
+            </figcaption>
+          </figure>
+
+          <h3 class="subhead">Stage 1 · Biophysical modeling</h3>
+          <div class="method-flow method-flow-4">
+            <article>
+              <h3>Structure library</h3>
+              <p>Experimental PDB structures from ~50 kDa enzymes to &gt;50,000 kDa viral capsids, plus AlphaFold3 models that add compositional and conformational heterogeneity.</p>
+            </article>
+            <article>
+              <h3>Particle placement</h3>
+              <p>RELION-derived picks and orientations blended with synthetic samples on \(S^3\); class-specific rules for enzymes, polysomes and capsids.</p>
+            </article>
+            <article>
+              <h3>Multi-scale volume &amp; ice</h3>
+              <p>Scale-adaptive meshes and collision checks; a vitreous ice slab with log-normal thickness and Perlin-noise topography.</p>
+            </article>
+            <article>
+              <h3>Projection &amp; CTF</h3>
+              <p>Summed electrostatic potential, weak-phase projection, and the contrast transfer function applied in Fourier space.</p>
+            </article>
+          </div>
+
+          <div class="equation-panel">
+            <p class="equation-label">Potential assembly and projection</p>
+            <div class="equation-row">
+              <div class="equation">\[\Phi(\mathbf{r}) = \sum_{i=1}^{L} \rho_i\bigl(R(q_i)^{-1}(\mathbf{r}-T_i)\bigr)\]</div>
+              <div class="equation">\[P(x,y) = \int_{-z_0/2}^{z_0/2} \Phi(x,y,z)\,\mathrm{d}z\]</div>
+            </div>
+            <p class="equation-note">
+              The electrostatic potential of all \(L\) embedded particles (density \(\rho_i\), orientation \(q_i\), translation
+              \(T_i\)) is projected under the weak-phase approximation; the CTF is then applied in Fourier space.
+            </p>
+          </div>
+
+          <div class="figure-grid two">
+            <figure class="wide-figure">
+              <a href="assets/images/alphafold3.webp" target="_blank" rel="noopener">
+                <img src="assets/images/alphafold3.webp" alt="AlphaFold3-based pipeline for enriching the structure library." loading="lazy" />
+              </a>
+              <figcaption>
+                <strong>AlphaFold3-augmented library.</strong> Sequences without experimental structures (UniProt) add
+                compositional heterogeneity; entries with multiple conformations, such as the open and closed states of human
+                PNPase, add conformational heterogeneity.
+              </figcaption>
+            </figure>
+            <figure class="wide-figure">
+              <a href="assets/images/structure_new.webp" target="_blank" rel="noopener">
+                <img src="assets/images/structure_new.webp" alt="Step-wise visual examples from the CryoCCD simulation pipeline." loading="lazy" />
+              </a>
+              <figcaption>
+                <strong>Step by step.</strong> Structures are embedded into 3D virtual volumes, projected to noise-free
+                micrographs with masks, and then given generated noise; the results sit next to real micrographs.
+              </figcaption>
+            </figure>
+          </div>
+
+          <figure class="wide-figure spaced">
+            <a href="assets/images/data.webp" target="_blank" rel="noopener">
+              <img src="assets/images/data.webp" alt="Outputs of the biophysical modeling engine: particle density maps, placement strategies, multi-scale synthesis, and simulated images." loading="lazy" />
+            </a>
+            <figcaption>
+              <strong>Biophysical modeling outputs.</strong> (a) Particle density maps processed from PDB data. (b) Placement
+              strategies chosen by particle properties. (c) Multi-scale synthetic data following EMPIAR-10421. (d) Simulated
+              cryo-EM images.
+            </figcaption>
+          </figure>
+
+          <h3 class="subhead">Stage 2 · Realistic noise generation</h3>
+          <div class="method-flow">
+            <article>
+              <h3>Cycle consistency</h3>
+              <p>A mask-conditioned generator \(G_{AB}\) and an unconditional \(G_{BA}\) are tied by an L1 cycle loss in both directions, so particle positions survive translation.</p>
+            </article>
+            <article>
+              <h3>Mask-guided contrastive learning</h3>
+              <p>Segmentation masks define particles as positives and background as negatives, sharpening edges, textures and spatial noise patterns.</p>
+            </article>
+            <article>
+              <h3>Predictor–corrector sampling</h3>
+              <p>A mask-conditioned UniPC sampler in the half log-SNR domain: a \(p\)-th order predictor and a \((p{+}1)\)-th order corrector per step.</p>
+            </article>
+          </div>
+
+          <div class="equation-panel">
+            <p class="equation-label">Training objective</p>
+            <div class="equation">\[\mathcal{L} = \gamma_{\text{adv}}\mathcal{L}_{\text{adv}} + \gamma_{\text{cyc}}\mathcal{L}_{\text{cyc}} + \gamma_{\text{NCE}}\mathcal{L}_{\text{NCE}}, \qquad \gamma_{\text{adv}}=1,\ \gamma_{\text{cyc}}=3,\ \gamma_{\text{NCE}}=5\]</div>
+            <div class="equation">\[\mathcal{L}_{\text{cyc}} = \mathbb{E}_{(\mathbf{x},\mathbf{m})}\bigl\|G_{BA}(G_{AB}(\mathbf{x},\mathbf{m}))-\mathbf{x}\bigr\|_1 + \mathbb{E}_{\mathbf{y}}\bigl\|G_{AB}(G_{BA}(\mathbf{y}),\varnothing)-\mathbf{y}\bigr\|_1\]</div>
+            <div class="equation">\[\mathcal{L}_{\text{NCE}} = -\log \frac{e^{\cos(q,k^+)/\tau}}{e^{\cos(q,k^+)/\tau} + \sum_{k^-} e^{\cos(q,k^-)/\tau}}\]</div>
+            <p class="equation-note">
+              The least-squares adversarial term carries the smallest weight; it serves only as an auxiliary
+              distribution-matching regularizer on top of the diffusion sampler.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ Results ============ -->
+      <section id="results" class="section section-soft">
+        <div class="container">
+          <div class="section-heading">
+            <p class="section-kicker">Results</p>
+            <h2>More realistic micrographs, better downstream models</h2>
+          </div>
+
+          <div class="metric-grid">
+            <article class="metric-card">
+              <strong>6 / 6</strong>
+              <span>EMPIAR datasets where CryoCCD has the lowest FID and CMMD</span>
+            </article>
+            <article class="metric-card">
+              <strong>−43%</strong>
+              <span>Mean FID vs. the strongest mixed-trained baseline (126.0 vs. 222.1)</span>
+            </article>
+            <article class="metric-card">
+              <strong>0.797</strong>
+              <span>Topaz picking AUPRC on PhageMS2, up from 0.601 for the best baseline</span>
+            </article>
+            <article class="metric-card">
+              <strong>4 / 4</strong>
+              <span>Held-out EMPIAR datasets (unseen families or imaging conditions) won on FID and CMMD</span>
+            </article>
+          </div>
+
+          <h3 class="subhead">Visual quality</h3>
+          <figure class="wide-figure">
+            <a href="assets/images/visual_quality_new.webp" target="_blank" rel="noopener">
+              <img src="assets/images/visual_quality_new.webp" alt="Real micrographs compared with micrographs generated by CryoCCD and baselines across datasets." loading="lazy" />
+            </a>
+            <figcaption>
+              <strong>Real vs. generated micrographs.</strong> CryoCCD reproduces real noise characteristics while
+              preserving particle boundaries and particle–background contrast. Gaussian, Poisson and mixed noise miss the
+              structured noise; CycleDiffusion blurs boundaries; CryoGEM and CycleNet collapse on the composite synthetic
+              data.
+            </figcaption>
+          </figure>
+
+          <div class="table-card">
+            <div class="table-head">
+              <p class="table-title">FID ↓ / CMMD ↓ on six cryo-EM datasets</p>
+              <div class="seg" role="tablist" aria-label="Metric">
+                <button type="button" role="tab" aria-selected="true" data-metric="fid">FID</button>
+                <button type="button" role="tab" aria-selected="false" data-metric="cmmd">CMMD</button>
+              </div>
+            </div>
+            <div class="table-scroll">
+              <table class="results" id="fid-table">
+                <thead>
+                  <tr>
+                    <th>Method</th><th>TRPV1</th><th>β-gal.</th><th>Rhino</th><th>Innexin-6</th><th>MLA</th><th>GroEL</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr><td>Gaussian</td><td data-fid="287.04" data-cmmd="2.81"></td><td data-fid="351.27" data-cmmd="2.96"></td><td data-fid="292.56" data-cmmd="2.74"></td><td data-fid="328.17" data-cmmd="2.38"></td><td data-fid="225.20" data-cmmd="1.80"></td><td data-fid="364.28" data-cmmd="1.87"></td></tr>
+                  <tr><td>Poisson</td><td data-fid="396.59" data-cmmd="3.19"></td><td data-fid="515.91" data-cmmd="2.89"></td><td data-fid="395.59" data-cmmd="3.58"></td><td data-fid="467.19" data-cmmd="2.66"></td><td data-fid="388.26" data-cmmd="2.57"></td><td data-fid="410.38" data-cmmd="2.33"></td></tr>
+                  <tr><td>Poi–Gau</td><td data-fid="290.68" data-cmmd="2.86"></td><td data-fid="356.96" data-cmmd="3.01"></td><td data-fid="301.77" data-cmmd="2.77"></td><td data-fid="272.24" data-cmmd="2.28"></td><td data-fid="239.43" data-cmmd="1.80"></td><td data-fid="369.95" data-cmmd="1.87"></td></tr>
+                  <tr><td>CycleDiffusion</td><td data-fid="199.47" data-cmmd="2.20"></td><td data-fid="247.09" data-cmmd="2.04"></td><td data-fid="210.22" data-cmmd="1.98"></td><td data-fid="208.23" data-cmmd="1.95"></td><td data-fid="197.15" data-cmmd="2.00"></td><td data-fid="270.58" data-cmmd="2.62"></td></tr>
+                  <tr><td>CryoGEM</td><td data-fid="192.28" data-cmmd="2.17"></td><td data-fid="283.28" data-cmmd="2.73"></td><td data-fid="224.18" data-cmmd="3.41"></td><td data-fid="223.02" data-cmmd="3.76"></td><td data-fid="189.46" data-cmmd="2.93"></td><td data-fid="279.20" data-cmmd="2.77"></td></tr>
+                  <tr><td>CycleNet</td><td data-fid="211.30" data-cmmd="2.33"></td><td data-fid="235.02" data-cmmd="2.09"></td><td data-fid="228.79" data-cmmd="3.10"></td><td data-fid="215.66" data-cmmd="2.47"></td><td data-fid="203.50" data-cmmd="2.18"></td><td data-fid="290.41" data-cmmd="2.86"></td></tr>
+                  <tr class="ours"><td>CryoCCD (ours)</td><td data-fid="121.32" data-cmmd="1.53"></td><td data-fid="137.57" data-cmmd="1.66"></td><td data-fid="130.89" data-cmmd="1.63"></td><td data-fid="130.52" data-cmmd="1.46"></td><td data-fid="88.55" data-cmmd="0.94"></td><td data-fid="147.41" data-cmmd="1.32"></td></tr>
+                  <tr class="group"><td colspan="7">Separately trained on each dataset (ST)</td></tr>
+                  <tr><td>CryoGEM (ST)</td><td data-fid="61.70" data-cmmd="0.74"></td><td data-fid="70.11" data-cmmd="0.79"></td><td data-fid="68.87" data-cmmd="0.73"></td><td data-fid="82.22" data-cmmd="0.82"></td><td data-fid="54.05" data-cmmd="0.69"></td><td data-fid="87.50" data-cmmd="0.85"></td></tr>
+                  <tr class="ours"><td>CryoCCD (ST)</td><td data-fid="57.42" data-cmmd="0.71"></td><td data-fid="60.13" data-cmmd="0.70"></td><td data-fid="51.88" data-cmmd="0.67"></td><td data-fid="70.57" data-cmmd="0.75"></td><td data-fid="45.09" data-cmmd="0.67"></td><td data-fid="82.52" data-cmmd="0.77"></td></tr>
+                </tbody>
+              </table>
+            </div>
+            <p class="table-note">
+              Mixed-dataset training unless marked ST. Evaluation micrographs are a disjoint 20% split. CryoCCD also has the
+              lowest radially averaged power-spectrum discrepancy in particle-containing regions on all six datasets (see
+              the appendix).
+            </p>
+          </div>
+
+          <h3 class="subhead">Downstream: particle picking and pose estimation</h3>
+          <p class="section-note narrow">
+            Topaz fine-tuned on CryoCCD micrographs separates particles from background more reliably, and CryoFIRE trained
+            on CryoCCD particles, which come with exact orientation labels, gives lower rotation error and better resolution
+            on real data.
+          </p>
+
+          <figure class="wide-figure spaced">
+            <a href="assets/images/par.webp" target="_blank" rel="noopener">
+              <img src="assets/images/par.webp" alt="Qualitative comparison of particle picking results across methods." loading="lazy" />
+            </a>
+            <figcaption>
+              <strong>Particle picking.</strong> Blue circles are correct picks; red circles are misses or false picks.
+              Fine-tuning on CryoCCD-generated micrographs gives the highest picking accuracy.
+            </figcaption>
+          </figure>
+
+          <div class="table-pair">
+            <div class="table-card">
+              <p class="table-title">Particle picking · AUPRC ↑</p>
+              <div class="table-scroll">
+                <table class="results">
+                  <thead><tr><th>Method</th><th>Proteasome</th><th>Integrin</th><th>PhageMS2</th><th>HumanBAF</th></tr></thead>
+                  <tbody>
+                    <tr><td>Gaussian</td><td>0.463</td><td>0.233</td><td>0.575</td><td>0.449</td></tr>
+                    <tr><td>Poisson</td><td>0.458</td><td>0.195</td><td>0.408</td><td>0.392</td></tr>
+                    <tr><td>Poi–Gau</td><td>0.438</td><td>0.244</td><td>0.601</td><td>0.376</td></tr>
+                    <tr><td>CycleDiffusion</td><td>0.357</td><td>0.233</td><td>0.420</td><td>0.369</td></tr>
+                    <tr><td>CryoGEM</td><td>0.257</td><td>0.208</td><td>0.159</td><td>0.178</td></tr>
+                    <tr><td>CycleNet</td><td>0.343</td><td>0.251</td><td>0.399</td><td>0.297</td></tr>
+                    <tr><td>Topaz</td><td>0.301</td><td>0.510</td><td>0.317</td><td>0.487</td></tr>
+                    <tr class="ours"><td>CryoCCD (ours)</td><td>0.479</td><td>0.532</td><td>0.797</td><td>0.588</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            <div class="table-card">
+              <p class="table-title">Pose estimation · rotation error (rad) ↓</p>
+              <div class="table-scroll">
+                <table class="results">
+                  <thead><tr><th>Method</th><th>Proteasome</th><th>Integrin</th><th>PhageMS2</th><th>HumanBAF</th></tr></thead>
+                  <tbody>
+                    <tr><td>Gaussian</td><td>0.51</td><td>1.49</td><td>0.99</td><td>1.58</td></tr>
+                    <tr><td>Poisson</td><td>1.09</td><td>1.66</td><td>1.03</td><td>1.60</td></tr>
+                    <tr><td>Poi–Gau</td><td>1.32</td><td>1.57</td><td>0.73</td><td>1.51</td></tr>
+                    <tr><td>CycleDiffusion</td><td>0.47</td><td>1.41</td><td>0.97</td><td>1.67</td></tr>
+                    <tr><td>CryoGEM</td><td>1.72</td><td>1.94</td><td>1.20</td><td>1.78</td></tr>
+                    <tr><td>CycleNet</td><td>1.03</td><td>1.50</td><td>1.19</td><td>1.69</td></tr>
+                    <tr><td>CryoFIRE</td><td>1.54</td><td>0.97</td><td>0.75</td><td>1.49</td></tr>
+                    <tr class="ours"><td>CryoCCD (ours)</td><td>0.44</td><td>0.90</td><td>0.51</td><td>1.47</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          <h3 class="subhead">Generalization to held-out datasets</h3>
+          <div class="table-card">
+            <p class="table-title">FID ↓ on four EMPIAR datasets not used in training</p>
+            <div class="table-scroll">
+              <table class="results">
+                <thead><tr><th>Method</th><th>EMPIAR-10028</th><th>EMPIAR-10059</th><th>EMPIAR-10389</th><th>EMPIAR-10532</th></tr></thead>
+                <tbody>
+                  <tr><td>Gaussian</td><td>290.34</td><td>301.07</td><td>275.46</td><td>299.01</td></tr>
+                  <tr><td>Poisson</td><td>443.13</td><td>389.78</td><td>391.27</td><td>410.98</td></tr>
+                  <tr><td>Poi–Gau</td><td>286.46</td><td>300.98</td><td>277.04</td><td>307.87</td></tr>
+                  <tr><td>CryoGEM</td><td>232.69</td><td>247.58</td><td>244.33</td><td>280.61</td></tr>
+                  <tr><td>CycleNet</td><td>210.47</td><td>227.48</td><td>230.09</td><td>222.56</td></tr>
+                  <tr class="ours"><td>CryoCCD (ours)</td><td>135.77</td><td>140.54</td><td>131.90</td><td>158.75</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <p class="table-note">
+              EMPIAR-10028, 10389 and 10532 share no protein family with the training data; EMPIAR-10059 (TRPV1) is a held-out
+              imaging condition. CryoCCD also has the lowest CMMD on all four.
+            </p>
+          </div>
+
+          <h3 class="subhead">Ablation</h3>
+          <div class="table-card">
+            <p class="table-title">FID ↓ when removing diffusion or biophysical components</p>
+            <div class="table-scroll">
+              <table class="results">
+                <thead><tr><th>Setting</th><th>TRPV1</th><th>β-gal.</th><th>Rhino</th><th>Innexin-6</th><th>MLA</th><th>GroEL</th></tr></thead>
+                <tbody>
+                  <tr><td>w/o cycle consistency</td><td>243.38</td><td>254.97</td><td>270.01</td><td>248.53</td><td>199.79</td><td>300.35</td></tr>
+                  <tr><td>w/o mask-guided contrastive</td><td>155.95</td><td>163.31</td><td>159.44</td><td>169.01</td><td>122.57</td><td>191.49</td></tr>
+                  <tr><td>w/o predictor–corrector</td><td>147.75</td><td>150.26</td><td>155.37</td><td>148.45</td><td>100.63</td><td>177.44</td></tr>
+                  <tr class="group"><td colspan="7">Biophysical modeling variants</td></tr>
+                  <tr><td>Global-gradient ice layer</td><td>199.84</td><td>270.32</td><td>212.09</td><td>228.65</td><td>197.52</td><td>284.43</td></tr>
+                  <tr><td>Small-defocus CTF</td><td>149.33</td><td>151.79</td><td>163.31</td><td>147.28</td><td>104.01</td><td>180.43</td></tr>
+                  <tr><td>Large-defocus CTF</td><td>148.47</td><td>156.90</td><td>166.44</td><td>150.80</td><td>107.09</td><td>184.47</td></tr>
+                  <tr class="ours"><td>Full CryoCCD</td><td>121.32</td><td>137.57</td><td>130.89</td><td>130.52</td><td>88.55</td><td>147.41</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ Why it matters ============ -->
+      <section class="section">
+        <div class="container split-panel">
+          <div>
+            <p class="section-kicker">Why it matters</p>
+            <h2>Turn a few real annotations into a large synthetic corpus.</h2>
+          </div>
+          <div class="prose">
+            <p>
+              Every CryoCCD micrograph comes with exact particle positions, orientations and masks, labels that are slow and
+              error-prone to obtain from real cryo-EM data.
+            </p>
+            <p>
+              Because the noise is learned from real micrographs rather than assumed to be Gaussian or Poisson, models trained
+              on the synthetic data transfer to real data. CryoCCD can help amplify limited real annotations and speed up
+              the development of computational tools for the cryo-EM community.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ Citation ============ -->
+      <section id="citation" class="section section-soft">
+        <div class="container">
+          <div class="section-heading">
+            <p class="section-kicker">Citation</p>
+            <h2>Cite CryoCCD</h2>
+            <p class="section-note">If you find our work useful in your research, please consider citing:</p>
+          </div>
+          <div class="bibtex-card">
+            <button class="copy-button" type="button" data-copy-bib>Copy BibTeX</button>
+            <pre><code id="bibtex">@article{jiang2026cryoccd,
+  title   = {Simulating Cryo-EM: Cycle-Consistent Predictor--Corrector Diffusion with Biophysical Modeling},
+  author  = {Runmin Jiang and Genpei Zhang and Yuntian Yang and Siqi Wu and Seonghui Min and Xi Xiao and Yizhou Zhao and Xiao Wang and Tianyang Wang and Xingjian Li and Muyuan Chen and Min Xu},
+  journal = {Transactions on Machine Learning Research},
+  year    = {2026},
+  url     = {https://openreview.net/forum?id=oBBBg2MbGB}
+}</code></pre>
+          </div>
+          <p class="ack">
+            <strong>Acknowledgement.</strong> This work was supported in part by U.S. NSF grant DBI-2238093. We thank Yuheng
+            Zhang for assistance with data analysis.
+          </p>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <div class="container footer-inner">
+        <p>
+          Project page for CryoCCD (TMLR 2026). Layout follows common academic project-page conventions, inspired by the
+          <a href="https://github.com/nerfies/nerfies.github.io" target="_blank" rel="noopener">Nerfies</a> template.
+          Page content released under
+          <a href="http://creativecommons.org/licenses/by-sa/4.0/" target="_blank" rel="noopener">CC BY-SA 4.0</a>.
+        </p>
+        <a href="#top">Back to top</a>
+      </div>
+    </footer>
+
+    <script src="assets/site.js"></script>
+  </body>
+</html>

@@ -1,6 +1,11 @@
+# CryoCCD
+
+**Simulating Cryo-EM: Cycle-Consistent Predictor–Corrector Diffusion with Biophysical Modeling**
+Transactions on Machine Learning Research (TMLR), 2026 · [OpenReview](https://openreview.net/forum?id=oBBBg2MbGB) · [Project page](https://runminjiang.github.io/CryoCCD/)
+
 ## Project Structure
 
-This repository is organized into two main modules:
+This repository is organized into two main modules, plus the project page in `docs/`:
 
 ---
 
@@ -25,3 +30,13 @@ This folder implements our **CryoCCD model**, including:
 ---
 
 All EMPIAR datasets can be downloaded in https://www.ebi.ac.uk/empiar/
+
+
+---
+
+### 📁 `docs/`
+
+Static project page (`index.html`, figures, paper PDF). To publish it: make the repository public, then
+**Settings → Pages → Deploy from a branch → `main` / `/docs`**. It is served at
+`https://<owner>.github.io/CryoCCD/`; if the owner or repository name changes, update the `canonical`
+and `og:image` URLs and the Code button in `docs/index.html`.
